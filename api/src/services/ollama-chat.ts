@@ -9,7 +9,7 @@ export function getOllamaBaseUrl(): string {
 }
 
 export function getOllamaModel(): string {
-  return process.env.OLLAMA_MODEL ?? "qwen2.5:7b";
+  return process.env.OLLAMA_MODEL ?? "llama3.1";
 }
 
 export async function ollamaChat(
