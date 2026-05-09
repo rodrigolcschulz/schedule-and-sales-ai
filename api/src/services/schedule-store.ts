@@ -54,10 +54,19 @@ export class ScheduleStore {
   private bookings = new Map<string, Booking>();
   private readonly firstHour: number;
   private readonly lastStartHour: number;
+  private readonly allowedWeekdays?: Set<number>;
 
-  constructor(config?: { firstHour?: number; lastStartHour?: number }) {
+  constructor(config?: {
+    firstHour?: number;
+    lastStartHour?: number;
+    /** 0=domingo ... 6=sábado; omitido = todos os dias */
+    allowedWeekdays?: number[];
+  }) {
     this.firstHour = config?.firstHour ?? SLOT_FIRST_HOUR_LOCAL;
     this.lastStartHour = config?.lastStartHour ?? SLOT_LAST_START_HOUR_LOCAL;
+    this.allowedWeekdays = config?.allowedWeekdays?.length
+      ? new Set(config.allowedWeekdays)
+      : undefined;
   }
 
   /**
@@ -67,6 +76,13 @@ export class ScheduleStore {
   getSlotsForDay(dateYmd: string): Slot[] {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateYmd);
     if (!m) return [];
+
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    if (this.allowedWeekdays && !this.allowedWeekdays.has(weekday)) return [];
+
     const slots: Slot[] = [];
     for (let h = this.firstHour; h <= this.lastStartHour; h++) {
       const s = new Date(`${dateYmd}T${pad2(h)}:00:00${TZ_OFFSET_BR}`);

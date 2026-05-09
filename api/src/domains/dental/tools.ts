@@ -1,6 +1,11 @@
 import type { OllamaToolDefinition } from "../../services/llm-tools.js";
 import type { ToolResult, DomainContext } from "../types.js";
-import { servicesPayloadForApi, serviceById } from "./catalog.js";
+import {
+  DENTAL_SERVICES,
+  servicesPayloadForApi,
+  serviceById,
+  resolveServiceIdFromText,
+} from "./catalog.js";
 import type { PatientStore } from "./patient-store.js";
 
 function normPhone(p: string): string {
@@ -9,6 +14,25 @@ function normPhone(p: string): string {
 
 function asStr(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
+}
+
+function resolveServiceId(input: string): string | undefined {
+  const trimmed = input.trim().toLowerCase();
+  if (!trimmed) return undefined;
+  return serviceById(trimmed) ? trimmed : resolveServiceIdFromText(trimmed);
+}
+
+function buildInvalidServiceError(serviceRaw: string): string {
+  const term = serviceRaw.trim().toLowerCase();
+  const suggested = DENTAL_SERVICES.filter((s) =>
+    s.keywords.some((kw) => kw.includes(term) || term.includes(kw))
+  ).slice(0, 3);
+
+  const suggestionText = suggested.length
+    ? suggested.map((s) => `${s.id} (${s.name})`).join(", ")
+    : DENTAL_SERVICES.map((s) => s.id).join(", ");
+
+  return `invalid_service_id: use um destes service_id -> ${suggestionText}`;
 }
 
 export const DENTAL_TOOLS: OllamaToolDefinition[] = [
@@ -133,14 +157,15 @@ export async function executeDentalTool(
         const slotId = asStr(args.slot_id);
         const patientName = asStr(args.patient_name);
         const phone = args.phone != null ? normPhone(String(args.phone)) : "";
-        const serviceId = asStr(args.service_id);
+        const serviceRaw = asStr(args.service_id);
+        const serviceId = serviceRaw ? resolveServiceId(serviceRaw) : undefined;
         const notes = asStr(args.notes);
 
-        if (!slotId || !patientName || !phone || !serviceId) {
+        if (!slotId || !patientName || !phone || !serviceRaw) {
           return { ok: false, error: "missing_fields" };
         }
-        if (!serviceById(serviceId)) {
-          return { ok: false, error: "invalid_service_id" };
+        if (!serviceId || !serviceById(serviceId)) {
+          return { ok: false, error: buildInvalidServiceError(serviceRaw) };
         }
 
         const res = ctx.patients.createAppointment(ctx.schedule, {

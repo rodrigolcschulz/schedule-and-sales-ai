@@ -6,7 +6,11 @@ import { PatientStore } from "./patient-store.js";
 import { formatServicesText, resolveServiceIdFromText, serviceById } from "./catalog.js";
 
 /** Clínica funciona seg–sex 8h–17h (último slot inicia às 17h, termina 18h) */
-const DENTAL_SCHEDULE = { firstHour: 8, lastStartHour: 17 };
+const DENTAL_SCHEDULE = {
+  firstHour: 8,
+  lastStartHour: 17,
+  allowedWeekdays: [1, 2, 3, 4, 5],
+};
 
 const DENTAL_WA_HELP = [
   "Clínica Odonto Demo — Comandos:",
