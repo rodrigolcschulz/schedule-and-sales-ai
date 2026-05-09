@@ -1,0 +1,304 @@
+:root {
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+  color: #0f172a;
+  background: #f1f5f9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.top-nav {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.nav-link {
+  color: #64748b;
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.35rem 0.65rem;
+  border-radius: 8px;
+}
+
+.nav-link:hover {
+  color: #0ea5e9;
+  background: #f0f9ff;
+}
+
+.nav-link.active {
+  color: #0ea5e9;
+  background: #e0f2fe;
+}
+
+.status-list {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.chat-card .chat-log {
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  overflow-y: auto;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0;
+}
+
+.chat-bubble {
+  margin-bottom: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  max-width: 95%;
+}
+
+.chat-bubble.user {
+  align-self: flex-end;
+  background: #e0f2fe;
+  border: 1px solid #bae6fd;
+}
+
+.chat-bubble.assistant {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.chat-role {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #64748b;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.chat-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 0.95rem;
+}
+
+.tool-toggle {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  color: #475569;
+  cursor: pointer;
+}
+
+.tool-toggle input {
+  margin-top: 0.2rem;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.chat-input {
+  flex: 1;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 1rem;
+  resize: vertical;
+  min-height: 2.5rem;
+}
+
+.marg-top {
+  margin-top: 0.75rem;
+}
+
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+.header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+}
+
+.muted {
+  color: #64748b;
+}
+
+.small {
+  font-size: 0.85rem;
+}
+
+.block {
+  display: block;
+}
+
+.card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  margin-top: 1.25rem;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 8%);
+}
+
+.card h2 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+}
+
+.card h3.subh {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.muted-card {
+  background: #f8fafc;
+}
+
+.row.align-end {
+  align-items: flex-end;
+}
+
+.row.gap-sm {
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.field.shrink {
+  flex: 0 1 200px;
+}
+
+.field select {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 1rem;
+  background: #fff;
+}
+
+.total-line {
+  margin: 0.75rem 0;
+}
+
+button.secondary {
+  background: #64748b;
+}
+
+button.secondary:hover {
+  background: #475569;
+}
+
+.booking-item.block-start {
+  align-items: flex-start;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.field span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.field input {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 1rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.grow {
+  flex: 1 1 160px;
+}
+
+.banner {
+  padding: 0.5rem 0.75rem;
+  background: #e0f2fe;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.slot-list,
+.booking-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+}
+
+.slot-item,
+.booking-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.slot-item:last-child,
+.booking-item:last-child {
+  border-bottom: none;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 8px;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.9rem;
+  background: #0ea5e9;
+  color: #fff;
+}
+
+button:hover {
+  background: #0284c7;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+button.ghost {
+  background: transparent;
+  color: #0ea5e9;
+  border: 1px solid #7dd3fc;
+  margin-bottom: 0.5rem;
+}
+
+button.ghost:hover {
+  background: #e0f2fe;
+}
+
+code {
+  font-size: 0.75rem;
+  background: #f1f5f9;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+}

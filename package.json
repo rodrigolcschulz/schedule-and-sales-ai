@@ -1,0 +1,17 @@
+{
+  "name": "schedule-and-sales-ai",
+  "private": true,
+  "workspaces": [
+    "api",
+    "web"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w api",
+    "dev:web": "npm run dev -w web",
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev:api\" \"npm run dev:web\"",
+    "build": "npm run build -w api && npm run build -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

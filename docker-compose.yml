@@ -1,0 +1,28 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    environment:
+      PORT: "3001"
+      HOST: "0.0.0.0"
+      # Stub: só loga mensagens; integração Baileys pode ser feita depois
+      WHATSAPP_PROVIDER: stub
+      # Ollama no host (Docker Desktop / Linux com host-gateway)
+      OLLAMA_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "3001"
+    # Descomente para testar a API direto no host (curl, Postman)
+    ports:
+      - "3001:3001"
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    ports:
+      - "8080:80"
+    depends_on:
+      - api

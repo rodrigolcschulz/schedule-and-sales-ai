@@ -1,0 +1,119 @@
+# schedule-and-sales-ai — Schedule & sales + local LLM (pizzeria demo)
+
+Este projeto é um **demo full-stack**: **agendamento** (slots para retirada/entrega) e **venda** (pedidos com cardápio fixo), no mesmo backend. O nome da pasta antiga (`scheduling-ai`) não reflete mais o escopo — pense no repositório como **“agenda + pedidos”** para uma pizzaria.
+
+Monorepo **Node**: API **Fastify** (`api/`) + **React + Vite** (`web/`). Dados ficam **em memória** (sem PostgreSQL nesta versão). **WhatsApp** usa o provedor **`stub`** por padrão (log/console); Baileys ou outro canal pode ser ligado depois.
+
+---
+
+## Duas frentes do negócio
+
+| Área | O que é no demo |
+|------|------------------|
+| **Agendamento** | Slots à **noite** no horário de **Brasília** (18h–23h, de 1 em 1 h); criar / listar / cancelar reserva. |
+| **Vendas** | Cardápio em `pizzeria-catalog.ts`, carrinho no front, pedidos em memória; total calculado no servidor. |
+
+Mesmas regras expostas por **REST**, **comandos de texto no WhatsApp (stub)** e, opcionalmente, **tools do LLM** (`GET /llm/tools`, `POST /llm/chat/agent`).
+
+---
+
+## O que já existe
+
+- **UI**: página principal com dados do cliente, pedidos, agendamentos e horários livres.
+- **Chat local**: página **LLM local** — conversa simples com Ollama ou modo **agente** com tools de agenda + pedido.
+- **Docker**: interface na porta **8080**, API na **3001** (ver abaixo).
+
+---
+
+## Preços do demo (fonte única)
+
+Os valores vêm de **`api/src/services/pizzeria-catalog.ts`** (`GET /menu`). A tabela abaixo é só referência na documentação — **ao mudar preços no arquivo, atualize a tabela**.
+
+| Item | Preço (BRL) |
+|------|----------------|
+| Pizza média | R$ 60 |
+| Pizza grande | R$ 80 |
+| Refrigerante 600 ml | R$ 10 |
+| Refrigerante 2 L | R$ 16 |
+
+---
+
+## Rodar em desenvolvimento
+
+Na raiz:
+
+```bash
+npm install
+npm run dev
+```
+
+- **API**: `http://localhost:3001`
+  - Agenda: `GET /slots?date=YYYY-MM-DD`, `POST /bookings`, `GET /bookings`, `DELETE /bookings/:id`
+  - Vendas: `GET /menu`, `POST /orders`, `GET /orders`
+  - WhatsApp (stub): `POST /integrations/whatsapp/simulate-inbound`
+  - LLM: `GET /llm/status`, `POST /llm/chat`, `GET /llm/tools`, `POST /llm/tools/invoke`, `POST /llm/chat/agent`
+- **Front (Vite)**: `http://localhost:5173` — proxy para a API.
+
+Variáveis úteis: `WHATSAPP_PROVIDER=stub` (padrão), `OLLAMA_URL`, `OLLAMA_MODEL`, `LLM_AGENT_SYSTEM_PROMPT`.
+
+---
+
+## Docker (front + API)
+
+```bash
+docker compose up --build
+```
+
+- **Interface**: `http://localhost:8080`
+- **API no host**: `http://localhost:3001`
+
+Configure `OLLAMA_URL` se a API estiver no container e o Ollama no host (ex.: `http://host.docker.internal:11434`), conforme `docker-compose.yml`.
+
+---
+
+## WhatsApp depois
+
+Com **`WHATSAPP_PROVIDER=stub`**:
+
+```bash
+curl -s -X POST http://localhost:3001/integrations/whatsapp/simulate-inbound ^
+  -H "Content-Type: application/json" ^
+  -d "{\"from\":\"5511999999999\",\"text\":\"cardapio\"}"
+```
+
+Integração real: implementar provedor em `api/src/whatsapp/` e registrar em `factory.ts`.
+
+---
+
+## Stack (agora vs depois)
+
+| Parte | Estado atual | Próximos passos típicos |
+|--------|----------------|-------------------------|
+| Backend | Node + TypeScript, Fastify | — |
+| Persistência | Memória | PostgreSQL |
+| LLM | Ollama + chat + agente com tools | Refinar prompts e políticas |
+| WhatsApp | Stub + simulação | Baileys ou Cloud API |
+
+---
+
+## Estrutura útil
+
+```text
+api/src/
+  index.ts              # HTTP + WhatsApp bootstrap
+  services/
+    schedule-store.ts   # agendamento (noite, Brasília)
+    order-store.ts      # vendas / pedidos
+    pizzeria-catalog.ts # cardápio e preços
+    whatsapp-bot.ts     # comandos texto (agenda + pizzaria)
+    llm-tools.ts        # tools para o agente (REST paralelo)
+    llm-agent.ts        # loop Ollama + tools
+    ollama-chat.ts      # cliente HTTP Ollama
+  whatsapp/
+web/src/
+  pages/Home.tsx        # agendamento + vendas
+  pages/Chat.tsx        # LLM
+docker/
+```
+
+O nome interno no `package.json` da raiz é **`schedule-and-sales-ai`** (agenda + vendas + LLM local).
