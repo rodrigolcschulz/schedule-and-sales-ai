@@ -538,3 +538,12 @@ button.ghost.danger:hover {
     display: none;
   }
 }
+
+/* ── Markdown nas bolhas do assistente ────────────────────────────────────── */
+.chat-text p { margin: 0 0 0.4rem; }
+.chat-text p:last-child { margin-bottom: 0; }
+.chat-text ul, .chat-text ol { margin: 0.25rem 0 0.4rem 1.25rem; padding: 0; }
+.chat-text li { margin: 0.1rem 0; }
+.chat-text strong { font-weight: 600; }
+.chat-text em { font-style: italic; }
+.chat-text code { font-family: monospace; background: #f1f5f9; padding: 0.1rem 0.25rem; border-radius: 4px; font-size: 0.88em; }

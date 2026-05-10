@@ -44,6 +44,8 @@ function sanitizeAssistantReply(text: string): string {
     .replace(/^\s*_\([^\)]+\)_\s*$/gim, "")
     .replace(/^\s*\[[^\]]+\]\s*$/gim, "")
     .replace(/^\s*\([^\)]*service\s*:\s*\[[^\]]+\][^\)]*\)\s*$/gim, "")
+    // Remove "Resposta do sistema: {...}" artifacts
+    .replace(/[Rr]esposta\s+do\s+sistema\s*:\s*(\{[^}]*\}|"[^"]*")/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 

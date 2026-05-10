@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import {
   cancelBooking,
   fetchLlmChatAgent,
@@ -164,7 +165,13 @@ export function App() {
                 <span className="chat-role">
                   {m.role === "user" ? "Você" : "Assistente"}
                 </span>
-                <p className="chat-text">{m.content}</p>
+                <div className="chat-text">
+                  {m.role === "user" ? (
+                    <p style={{ margin: 0 }}>{m.content}</p>
+                  ) : (
+                    <ReactMarkdown>{m.content}</ReactMarkdown>
+                  )}
+                </div>
               </div>
             ))}
             {chatLoading && (

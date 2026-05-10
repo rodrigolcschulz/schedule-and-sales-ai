@@ -1,6 +1,6 @@
-# schedule-and-sales-ai — Local Business AI Assistant
+# schedule-and-sales-ai — Agente de IA
 
-Demo full-stack de um **agente de IA para negócios locais**: agendamento, atendimento, FAQ e vendas via WhatsApp + chat web. Arquitetura **modular por domínio** — troque uma variável de ambiente e o mesmo código vira uma clínica odontológica, uma pizzaria ou qualquer outro negócio.
+Demo full-stack de um **agente de IA para negócios locais**: agendamento, atendimento e FAQ via chat web e WhatsApp. Arquitetura **modular por domínio** — troque uma variável de ambiente e o mesmo código vira uma clínica odontológica, uma pizzaria ou qualquer outro negócio.
 
 Monorepo **Node**: API **Fastify** (`api/`) + **React + Vite** (`web/`). Dados em **memória** (sem banco nesta versão). WhatsApp usa o provedor **`stub`** por padrão; Baileys ou outro canal pode ser ligado depois.
 
@@ -8,10 +8,10 @@ Monorepo **Node**: API **Fastify** (`api/`) + **React + Vite** (`web/`). Dados e
 
 ## Domínios disponíveis
 
-| `BUSINESS_DOMAIN` | Negócio | Horário |
+| `BUSINESS_DOMAIN` | Negócio | Horário de atendimento |
 |---|---|---|
-| `dental` *(padrão)* | Clínica Odontológica | Seg–Sex 8h–17h (Brasília) |
-| `pizzeria` | Pizzaria | 18h–22h (Brasília) |
+| `dental` *(padrão)* | Clínica Odontológica | Seg–Sex 8h–17h |
+| `pizzeria` | Pizzaria | Seg–Dom 18h–22h |
 
 Trocar de domínio é só uma variável de ambiente — **mesma API, mesmo agente, mesmas tools genéricas**.
 
@@ -36,7 +36,7 @@ interface BusinessDomain {
 
 ### Serviços e preços de referência
 
-| Serviço | Duração | Preço (BRL) |
+| Serviço | Duração | Preço |
 |---|---|---|
 | Limpeza / Profilaxia | 60 min | R$ 150 |
 | Avaliação / Consulta | 60 min | R$ 120 |
@@ -49,17 +49,17 @@ interface BusinessDomain {
 
 Preços em `api/src/domains/dental/catalog.ts`.
 
-### Fluxos de conversa (WhatsApp ou chat)
+### Exemplos de conversa
 
 ```
-"quero marcar limpeza depois das 18h"
-→ agente chama get_services → list_available_slots → create_appointment
+"quero marcar uma limpeza"
+→ agente coleta nome, telefone e data → list_available_slots → create_appointment
 
 "preciso de atendimento de emergência hoje"
 → agente verifica horários → oferece opções → confirma → salva paciente
 
 "quais meus agendamentos?"
-→ comando "meus" ou agente chama list_appointments_for_phone
+→ agente chama list_appointments_for_phone
 ```
 
 ### Tools do agente (dental)
@@ -67,7 +67,7 @@ Preços em `api/src/domains/dental/catalog.ts`.
 | Tool | O que faz |
 |---|---|
 | `get_services` | Lista serviços, preços e duração |
-| `list_available_slots` | Horários livres em uma data |
+| `list_available_slots` | Horários livres em uma data (aceita dd/mm ou YYYY-MM-DD) |
 | `create_appointment` | Agenda consulta + cria registro de paciente |
 | `list_appointments_for_phone` | Consultas agendadas do paciente |
 | `cancel_appointment` | Cancela pelo booking_id + telefone |
@@ -79,7 +79,7 @@ Preços em `api/src/domains/dental/catalog.ts`.
 
 ### Cardápio de referência
 
-| Item | Preço (BRL) |
+| Item | Preço |
 |---|---|
 | Pizza média | R$ 60 |
 | Pizza grande | R$ 80 |
@@ -87,6 +87,17 @@ Preços em `api/src/domains/dental/catalog.ts`.
 | Refrigerante 2 L | R$ 16 |
 
 Preços em `api/src/services/pizzeria-catalog.ts`.
+
+---
+
+## Rodar com Docker
+
+```bash
+docker compose up --build
+```
+
+- **Interface**: http://localhost:8080
+- **API**: http://localhost:3001
 
 ---
 
@@ -107,7 +118,9 @@ BUSINESS_DOMAIN=dental npm run dev
 BUSINESS_DOMAIN=pizzeria npm run dev
 ```
 
-### Endpoints principais
+---
+
+## Endpoints principais
 
 | Rota | Descrição |
 |---|---|
@@ -120,14 +133,12 @@ BUSINESS_DOMAIN=pizzeria npm run dev
 | `GET /appointments?phone=` | Consultas do paciente *(dental only)* |
 | `POST /integrations/whatsapp/simulate-inbound` | Simular mensagem WhatsApp |
 | `GET /llm/status` | Status do Ollama |
-| `POST /llm/chat` | Chat direto (sem tools) |
-| `GET /llm/tools` | Tools do domínio ativo |
-| `POST /llm/tools/invoke` | Testar tool sem LLM |
 | `POST /llm/chat/agent` | Agente com tools (loop Ollama) |
+| `POST /llm/tools/invoke` | Testar tool diretamente sem LLM |
 
-**Front (Vite)**: `http://localhost:5173`
+---
 
-### Variáveis de ambiente
+## Variáveis de ambiente
 
 | Variável | Padrão | Descrição |
 |---|---|---|
@@ -136,40 +147,26 @@ BUSINESS_DOMAIN=pizzeria npm run dev
 | `OLLAMA_URL` | `http://localhost:11434` | Endpoint do Ollama |
 | `OLLAMA_MODEL` | `llama3.1` | Modelo usado no agente |
 | `LLM_AGENT_SYSTEM_PROMPT` | *(do domínio)* | Sobrescreve o system prompt do agente |
-| `LLM_SYSTEM_PROMPT` | *(do domínio)* | Sobrescreve o prompt do `/llm/chat` |
 
 ---
 
-## Docker
-
-```bash
-docker compose up --build
-```
-
-- **Interface**: `http://localhost:8080`
-- **API no host**: `http://localhost:3001`
-
-Configure `BUSINESS_DOMAIN` e `OLLAMA_URL` no `docker-compose.yml` conforme necessário (ex.: `OLLAMA_URL=http://host.docker.internal:11434`).
-
----
-
-## Simular WhatsApp (stub)
+## Simular WhatsApp
 
 ```bash
 # Ver horários disponíveis
-curl -s -X POST http://localhost:3001/integrations/whatsapp/simulate-inbound ^
-  -H "Content-Type: application/json" ^
-  -d "{\"from\":\"5511999999999\",\"text\":\"horarios 2026-05-12\"}"
+curl -s -X POST http://localhost:3001/integrations/whatsapp/simulate-inbound \
+  -H "Content-Type: application/json" \
+  -d '{"from":"5547999999999","text":"horarios 2026-05-12"}'
 
-# Agendar limpeza via comando direto
-curl -s -X POST http://localhost:3001/integrations/whatsapp/simulate-inbound ^
-  -H "Content-Type: application/json" ^
-  -d "{\"from\":\"5511999999999\",\"text\":\"agendar 2026-05-12 09 Maria limpeza\"}"
+# Agendar via comando direto
+curl -s -X POST http://localhost:3001/integrations/whatsapp/simulate-inbound \
+  -H "Content-Type: application/json" \
+  -d '{"from":"5547999999999","text":"agendar 2026-05-12 09 Maria limpeza"}'
 
-# Frase livre — cai no agente LLM com tools
-curl -s -X POST http://localhost:3001/integrations/whatsapp/simulate-inbound ^
-  -H "Content-Type: application/json" ^
-  -d "{\"from\":\"5511999999999\",\"text\":\"preciso agendar retorno na próxima semana\"}"
+# Frase livre — agente LLM com tools
+curl -s -X POST http://localhost:3001/integrations/whatsapp/simulate-inbound \
+  -H "Content-Type: application/json" \
+  -d '{"from":"5547999999999","text":"preciso agendar retorno na próxima semana"}'
 ```
 
 ---
@@ -186,21 +183,19 @@ api/src/
       patient-store.ts        # PatientStore (consultas)
       tools.ts                # 6 tools LLM
       prompt.ts               # system prompt da clínica
-      index.ts                # dentalDomain (horário 8h–17h)
+      index.ts                # dentalDomain (seg-sex 8h–17h)
     pizzeria/
-      index.ts                # pizzeriaDomain (wraps código existente, 18h–22h)
+      index.ts                # pizzeriaDomain (18h–22h)
   services/
-    schedule-store.ts         # agendamento genérico (horas configuráveis via construtor)
+    schedule-store.ts         # agendamento genérico (horas e dias configuráveis)
     order-store.ts            # pedidos (pizzeria)
     pizzeria-catalog.ts       # cardápio (pizzeria)
     whatsapp-bot.ts           # attachDomainWhatsAppBot — genérico + fallback LLM
-    llm-tools.ts              # tools legadas (pizzeria)
     llm-agent.ts              # runLlmToolAgent({ systemPrompt, tools, executeTool })
     ollama-chat.ts            # cliente HTTP Ollama
   whatsapp/
 web/src/
-  pages/Home.tsx              # agendamento + vendas
-  pages/Chat.tsx              # LLM chat
+  pages/Chat.tsx              # interface única: chat + painel lateral (consultas, horários, serviços)
 docker/
 ```
 
@@ -217,10 +212,11 @@ mensagem recebida
 
 ## Stack
 
-| Parte | Estado atual | Próximos passos típicos |
+| Parte | Estado atual | Próximos passos |
 |---|---|---|
 | Backend | Node + TypeScript, Fastify | — |
 | Domínios | dental, pizzeria | barbearia, pet shop, … |
-| Persistência | Memória | PostgreSQL |
-| LLM | Ollama + agente com tools | Refinar prompts, memória de sessão |
-| WhatsApp | Stub + simulação | Baileys ou Cloud API |
+| Persistência | Memória | PostgreSQL / SQLite |
+| LLM | Ollama (llama3.1) + agente com tools | Memória de sessão, streaming |
+| WhatsApp | Stub + simulação | Baileys ou Meta Cloud API |
+| Frontend | React + Vite, single-page | — |

@@ -52,6 +52,14 @@ function normalizeDateInput(raw: string): string | undefined {
     .padStart(2, "0")}-${day.toString().padStart(2, "0")}`;
 }
 
+function normalizeSlotId(raw: string): string {
+  // Already correct: 2026-05-12_1300
+  if (/^\d{4}-\d{2}-\d{2}_\d{4}$/.test(raw)) return raw;
+  // Missing minutes: 2026-05-12_13 → 2026-05-12_1300
+  if (/^\d{4}-\d{2}-\d{2}_\d{2}$/.test(raw)) return raw + "00";
+  return raw;
+}
+
 function resolveServiceId(input: string): string | undefined {
   const trimmed = input.trim().toLowerCase();
   if (!trimmed) return undefined;
@@ -202,7 +210,7 @@ export async function executeDentalTool(
       }
 
       case "create_appointment": {
-        const slotId = asStr(args.slot_id);
+        const slotId = asStr(args.slot_id) ? normalizeSlotId(asStr(args.slot_id)!) : undefined;
         const patientName = asStr(args.patient_name);
         const phone = args.phone != null ? normPhone(String(args.phone)) : "";
         const serviceRaw = asStr(args.service_id);
