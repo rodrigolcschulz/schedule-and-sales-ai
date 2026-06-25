@@ -90,6 +90,15 @@ Preços em `api/src/services/pizzeria-catalog.ts`.
 
 ---
 
+## Rodar Ollama
+
+```bash
+ollama serve
+ollama list
+```
+
+---
+
 ## Rodar com Docker
 
 ```bash
