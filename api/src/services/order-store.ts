@@ -1,70 +1,95 @@
-import { randomUUID } from "node:crypto";
-import type { OrderLine } from "./pizzeria-catalog.js";
-import {
-  drinkById,
-  flavorById,
-  lineFromDrink,
-  lineFromPizza,
-  totalReais,
-  type PizzaSizeId,
-} from "./pizzeria-catalog.js";
+// services/order-store.ts
+// Guarda pedidos (orders) em memória. É agnóstico ao catálogo do domínio:
+// quem resolve qual item existe e quanto custa é a camada do domínio
+// (equivalente a como ScheduleStore não sabe o que é "limpeza" ou "consulta",
+// só sabe slots). Aqui só entra item já resolvido: id, nome, preço, quantidade.
 
-export type Order = {
+export interface OrderInputLine {
+  /** Identificador do item no catálogo do domínio (ex: serviceId, sku) */
+  itemId: string;
+  /** Nome para exibição, já resolvido pelo domínio */
+  name: string;
+  /** Preço unitário em centavos — evita erro de ponto flutuante com dinheiro */
+  unitPriceCents: number;
+  quantity: number;
+}
+
+export interface OrderLine extends OrderInputLine {
+  totalCents: number;
+}
+
+export interface Order {
   id: string;
   customerName: string;
   phone: string;
   lines: OrderLine[];
-  totalReais: number;
+  totalCents: number;
   createdAt: string;
-};
+}
 
-export type OrderInputLine =
-  | { kind: "pizza"; flavorId: string; size: PizzaSizeId }
-  | { kind: "drink"; drinkId: string };
+export interface CreateOrderInput {
+  customerName: string;
+  phone: string;
+  lines: OrderInputLine[];
+}
+
+export type CreateOrderResult = Order | { error: "empty_order" | "invalid_line" };
 
 export class OrderStore {
-  private orders = new Map<string, Order>();
+  private readonly ordersById = new Map<string, Order>();
 
-  createOrder(input: {
-    customerName: string;
-    phone: string;
-    items: OrderInputLine[];
-  }): Order | { error: string } {
-    if (input.items.length === 0) return { error: "empty_order" };
-
-    const lines: OrderLine[] = [];
-    for (const it of input.items) {
-      if (it.kind === "pizza") {
-        if (!flavorById(it.flavorId)) return { error: "invalid_flavor" };
-        const pl = lineFromPizza(it.flavorId, it.size);
-        if (!pl) return { error: "invalid_pizza" };
-        lines.push(pl);
-      } else {
-        if (!drinkById(it.drinkId)) return { error: "invalid_drink" };
-        lines.push(lineFromDrink(it.drinkId)!);
-      }
+  createOrder(input: CreateOrderInput): CreateOrderResult {
+    if (!input.lines.length) {
+      return { error: "empty_order" };
     }
 
+    const lines: OrderLine[] = [];
+    for (const line of input.lines) {
+      if (!line.itemId || line.quantity <= 0 || line.unitPriceCents < 0) {
+        return { error: "invalid_line" };
+      }
+      lines.push({
+        ...line,
+        totalCents: line.unitPriceCents * line.quantity,
+      });
+    }
+
+    const totalCents = lines.reduce((sum, l) => sum + l.totalCents, 0);
+
     const order: Order = {
-      id: randomUUID(),
-      customerName: input.customerName.trim(),
-      phone: input.phone.replace(/\D/g, "") || input.phone.trim(),
+      id: this.generateOrderId(),
+      customerName: input.customerName,
+      phone: input.phone,
       lines,
-      totalReais: totalReais(lines),
+      totalCents,
       createdAt: new Date().toISOString(),
     };
-    this.orders.set(order.id, order);
+
+    this.ordersById.set(order.id, order);
     return order;
   }
 
+  getOrder(id: string): Order | undefined {
+    return this.ordersById.get(id);
+  }
+
   listOrders(): Order[] {
-    return [...this.orders.values()].sort((a, b) =>
-      b.createdAt.localeCompare(a.createdAt)
-    );
+    return Array.from(this.ordersById.values());
   }
 
   listOrdersByPhone(phone: string): Order[] {
-    const p = phone.replace(/\D/g, "") || phone;
-    return this.listOrders().filter((o) => o.phone === p);
+    return this.listOrders().filter((o) => o.phone === phone);
   }
+
+  private generateOrderId(): string {
+    return `ord_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  }
+}
+
+/** Formata centavos para exibição em reais, ex: 12345 -> "R$ 123,45" */
+export function formatCentsBr(cents: number): string {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(cents / 100);
 }

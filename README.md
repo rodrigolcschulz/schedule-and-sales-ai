@@ -1,231 +1,216 @@
-# schedule-and-sales-ai — Agente de IA
+# schedule-ai
 
-Demo full-stack de um **agente de IA para negócios locais**: agendamento, atendimento e FAQ via chat web e WhatsApp. Arquitetura **modular por domínio** — troque uma variável de ambiente e o mesmo código vira uma clínica odontológica, uma pizzaria ou qualquer outro negócio.
+Demo full-stack de agente de IA para atendimento e agendamento de negócios locais.
 
-Monorepo **Node**: API **Fastify** (`api/`) + **React + Vite** (`web/`). Dados em **memória** (sem banco nesta versão). WhatsApp usa o provedor **`stub`** por padrão; Baileys ou outro canal pode ser ligado depois.
+Arquitetura atual: API e frontend em TypeScript + serviço Python dedicado para inteligência de IA (planner, contracts, memory, rules e orquestração).
 
----
+Stack principal:
 
-## Domínios disponíveis
+- API em Fastify + TypeScript (`api`)
+- Web em React + Vite (`web`)
+- AI Service em Python + FastAPI (`python-ai`)
+- Ollama como motor de LLM (com suporte a OpenAI e Claude via adapter)
+- Persistência em memória nesta fase
 
-| `BUSINESS_DOMAIN` | Negócio | Horário de atendimento |
-|---|---|---|
-| `dental` *(padrão)* | Clínica Odontológica | Seg–Sex 8h–17h |
-| `pizzeria` | Pizzaria | Seg–Dom 18h–22h |
+## Visão geral
 
-Trocar de domínio é só uma variável de ambiente — **mesma API, mesmo agente, mesmas tools genéricas**.
+O projeto separa claramente três camadas:
 
-Para adicionar um novo vertical basta implementar a interface `BusinessDomain` em `api/src/domains/types.ts`:
+- **Domínio de negócio** — entidades, CRUD, auth e integrações (Fastify)
+- **Inteligência de IA** — planner, contracts, memory, rules e orquestração (Python)
+- **Canal de entrada** — chat web e WhatsApp (Fastify + React)
 
-```ts
-interface BusinessDomain {
-  id: string;
-  displayName: string;
-  systemPrompt: string;          // injetado no agente LLM
-  tools: OllamaToolDefinition[]; // tools enviadas ao Ollama
-  executeTool(name, args, ctx): Promise<ToolResult>;
-  createContext(): DomainContext; // instancia stores do domínio
-  whatsAppHelp: string;
-  handleWhatsAppCommand?(text, lower, from, ctx): Promise<string | null>;
+O domínio mais completo no repositório é o dental.
+
+## Arquitetura alvo
+
+```text
+Fastify API (TypeScript)
+├── Patients
+├── Appointments
+├── Services
+├── Authentication
+└── Internal AI API
+      |
+      v (POST /ai/plan, /ai/execute, /ai/reflect)
+Python AI Service (FastAPI)
+├── Planner
+├── Contracts (Pydantic)
+├── Memory (short-term e long-term)
+├── Tool Registry
+├── Rules Engine
+├── State Machine (LangGraph)
+├── Reflection
+├── Guardrails
+└── Provider Adapter (Ollama / OpenAI / Claude)
+      |
+      v
+Model Provider
+└── Ollama local (e/ou cloud models)
+```
+
+## Estrutura de pastas
+
+```text
+schedule-ai/
+├── api/                         # Fastify + TypeScript
+│   └── src/
+│       ├── domains/dental/
+│       ├── services/
+│       │   ├── ai-client.ts
+│       │   └── run-agent.ts
+│       └── index.ts
+├── web/                         # React + Vite
+├── python-ai/                   # FastAPI (novo)
+│   ├── main.py
+│   ├── Dockerfile
+│   ├── routers/
+│   │   └── ai.py               # /ai/plan, /ai/execute, /ai/reflect, /ai/health
+│   ├── contracts/
+│   │   └── planner.py          # Pydantic — espelha o Zod do TS
+│   ├── planner/
+│   │   └── llm_planner.py
+│   ├── memory/
+│   │   └── memory_store.py
+│   ├── rules/
+│   │   └── rules_engine.py
+│   ├── graph/
+│   │   └── state_machine.py    # LangGraph
+│   ├── guardrails/
+│   │   └── guardrails.py
+│   ├── providers/
+│   │   └── adapter.py          # Ollama / OpenAI / Claude
+│   └── requirements.txt
+```
+
+## Contratos
+
+Os contratos são definidos em JSON Schema e gerados para ambas as linguagens:
+
+- TypeScript: Zod (`api/src/services/planner-contract.ts`)
+- Python: Pydantic (`python-ai/contracts/planner.py`)
+
+Isso garante compatibilidade e evita drift entre os serviços.
+
+Exemplo de plano (versão 1.0):
+
+```json
+{
+  "version": "1.0",
+  "domainId": "dental",
+  "summary": "Plano montado para intenção book.",
+  "intent": "book",
+  "confidence": 0.85,
+  "needsClarification": true,
+  "missingFields": [
+    {
+      "field": "date",
+      "reason": "A data do atendimento não foi informada.",
+      "question": "Qual data você prefere para a consulta?"
+    }
+  ],
+  "steps": [
+    {
+      "id": "slots.list",
+      "title": "Consultar horários disponíveis na data",
+      "toolName": "list_available_slots",
+      "toolArgs": { "date": "2026-06-29" }
+    }
+  ],
+  "suggestedReply": "Qual data você prefere para a consulta?"
 }
 ```
 
----
+## Como rodar
 
-## Domínio: Clínica Odontológica
-
-### Serviços e preços de referência
-
-| Serviço | Duração | Preço |
-|---|---|---|
-| Limpeza / Profilaxia | 60 min | R$ 150 |
-| Avaliação / Consulta | 60 min | R$ 120 |
-| Retorno | 30 min | incluso |
-| Restauração / Obturação | 60 min | R$ 250 |
-| Extração | 60 min | R$ 200 |
-| Emergência | 60 min | R$ 180 |
-| Clareamento | 90 min | R$ 600 |
-| Ortodontia (avaliação) | 60 min | R$ 150 |
-
-Preços em `api/src/domains/dental/catalog.ts`.
-
-### Exemplos de conversa
-
-```
-"quero marcar uma limpeza"
-→ agente coleta nome, telefone e data → list_available_slots → create_appointment
-
-"preciso de atendimento de emergência hoje"
-→ agente verifica horários → oferece opções → confirma → salva paciente
-
-"quais meus agendamentos?"
-→ agente chama list_appointments_for_phone
-```
-
-### Tools do agente (dental)
-
-| Tool | O que faz |
-|---|---|
-| `get_services` | Lista serviços, preços e duração |
-| `list_available_slots` | Horários livres em uma data (aceita dd/mm ou YYYY-MM-DD) |
-| `create_appointment` | Agenda consulta + cria registro de paciente |
-| `list_appointments_for_phone` | Consultas agendadas do paciente |
-| `cancel_appointment` | Cancela pelo booking_id + telefone |
-| `get_patient_history` | Histórico de consultas |
-
----
-
-## Domínio: Pizzaria
-
-### Cardápio de referência
-
-| Item | Preço |
-|---|---|
-| Pizza média | R$ 60 |
-| Pizza grande | R$ 80 |
-| Refrigerante 600 ml | R$ 10 |
-| Refrigerante 2 L | R$ 16 |
-
-Preços em `api/src/services/pizzeria-catalog.ts`.
-
----
-
-## Rodar Ollama
+### Desenvolvimento
 
 ```bash
-ollama serve
-ollama list
+# API + Web (na raiz)
+npm install
+npm run dev
+
+# Python AI Service (terminal separado)
+cd python-ai
+python -m venv .venv
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python main.py
 ```
 
----
+### Ollama local (Windows)
 
-## Rodar com Docker
+```bash
+# Ver modelos locais
+ollama list
+
+# Baixar modelo (uma vez)
+ollama pull llama3.1
+
+# Rodar modelo no terminal
+ollama run llama3.1
+
+# Subir servidor manualmente apenas se nao estiver ativo
+ollama serve
+```
+
+Se `ollama serve` retornar erro de bind na porta `11434`, significa que o Ollama ja esta rodando.
+
+Notas:
+
+- Web: http://localhost:5173
+- API: http://localhost:3001
+- Python AI: http://localhost:8001
+- O backend de IA precisa do Ollama disponível (padrão: http://localhost:11434)
+
+### Docker
 
 ```bash
 docker compose up --build
 ```
 
-- **Interface**: http://localhost:8080
-- **API**: http://localhost:3001
+Serviços:
 
----
-
-## Rodar em desenvolvimento
-
-```bash
-npm install
-npm run dev
-```
-
-Para escolher o domínio:
-
-```bash
-# Clínica odontológica (padrão)
-BUSINESS_DOMAIN=dental npm run dev
-
-# Pizzaria
-BUSINESS_DOMAIN=pizzeria npm run dev
-```
-
----
+- Web: http://localhost:8080
+- API: http://localhost:3001
+- Python AI: http://localhost:8001
 
 ## Endpoints principais
 
-| Rota | Descrição |
-|---|---|
-| `GET /domain` | Domínio ativo e tools disponíveis |
-| `GET /catalog` | Catálogo do domínio (serviços ou cardápio) |
-| `GET /slots?date=YYYY-MM-DD` | Horários disponíveis |
-| `POST /bookings` | Criar agendamento (aceita `serviceId` para odonto) |
-| `GET /bookings` | Listar agendamentos |
-| `DELETE /bookings/:id` | Cancelar agendamento |
-| `GET /appointments?phone=` | Consultas do paciente *(dental only)* |
-| `POST /integrations/whatsapp/simulate-inbound` | Simular mensagem WhatsApp |
-| `GET /llm/status` | Status do Ollama |
-| `POST /llm/chat/agent` | Agente com tools (loop Ollama) |
-| `POST /llm/tools/invoke` | Testar tool diretamente sem LLM |
+### Fastify (porta 3001)
 
----
+- `GET  /health`
+- `GET  /domain`
+- `GET  /catalog`
+- `GET  /slots?date=YYYY-MM-DD`
+- `POST /bookings`
+- `GET  /bookings`
+- `DELETE /bookings/:id`
+- `GET  /appointments?phone=`
+- `GET  /llm/status`
+- `POST /llm/chat`
+- `POST /llm/tools/invoke`
+- `POST /llm/planner`
+- `POST /llm/chat/agent`
+- `POST /integrations/whatsapp/simulate-inbound`
 
-## Variáveis de ambiente
+### Python AI Service (porta 8001)
 
-| Variável | Padrão | Descrição |
-|---|---|---|
-| `BUSINESS_DOMAIN` | `dental` | Domínio ativo |
-| `WHATSAPP_PROVIDER` | `stub` | `stub` ou `baileys` |
-| `OLLAMA_URL` | `http://localhost:11434` | Endpoint do Ollama |
-| `OLLAMA_MODEL` | `llama3.1` | Modelo usado no agente |
-| `LLM_AGENT_SYSTEM_PROMPT` | *(do domínio)* | Sobrescreve o system prompt do agente |
+- `GET  /ai/health`
+- `POST /ai/plan`
+- `POST /ai/execute`
+- `POST /ai/reflect`
 
----
+## Fluxo do agente com planner acoplado
 
-## Simular WhatsApp
+No `POST /llm/chat/agent`:
 
-```bash
-# Ver horários disponíveis
-curl -s -X POST http://localhost:3001/integrations/whatsapp/simulate-inbound \
-  -H "Content-Type: application/json" \
-  -d '{"from":"5547999999999","text":"horarios 2026-05-12"}'
+1. O Fastify cria um plano chamando `/ai/plan` no Python service.
+2. Se o plano indicar falta de dados, retorna a pergunta objetiva do planner.
+3. Se o plano estiver completo, executa o fluxo do agente com tools.
+4. A resposta inclui o campo `plan` para auditoria do fluxo.
 
-# Agendar via comando direto
-curl -s -X POST http://localhost:3001/integrations/whatsapp/simulate-inbound \
-  -H "Content-Type: application/json" \
-  -d '{"from":"5547999999999","text":"agendar 2026-05-12 09 Maria limpeza"}'
+## Documentação
 
-# Frase livre — agente LLM com tools
-curl -s -X POST http://localhost:3001/integrations/whatsapp/simulate-inbound \
-  -H "Content-Type: application/json" \
-  -d '{"from":"5547999999999","text":"preciso agendar retorno na próxima semana"}'
-```
-
----
-
-## Arquitetura
-
-```
-api/src/
-  index.ts                    # bootstrap: seleciona domínio via BUSINESS_DOMAIN
-  domains/
-    types.ts                  # interface BusinessDomain
-    dental/
-      catalog.ts              # serviços, preços, keywords
-      patient-store.ts        # PatientStore (consultas)
-      tools.ts                # 6 tools LLM
-      prompt.ts               # system prompt da clínica
-      index.ts                # dentalDomain (seg-sex 8h–17h)
-    pizzeria/
-      index.ts                # pizzeriaDomain (18h–22h)
-  services/
-    schedule-store.ts         # agendamento genérico (horas e dias configuráveis)
-    order-store.ts            # pedidos (pizzeria)
-    pizzeria-catalog.ts       # cardápio (pizzeria)
-    whatsapp-bot.ts           # attachDomainWhatsAppBot — genérico + fallback LLM
-    llm-agent.ts              # runLlmToolAgent({ systemPrompt, tools, executeTool })
-    ollama-chat.ts            # cliente HTTP Ollama
-  whatsapp/
-web/src/
-  pages/Chat.tsx              # interface única: chat + painel lateral (consultas, horários, serviços)
-docker/
-```
-
-### Fluxo de mensagem WhatsApp
-
-```
-mensagem recebida
-  → comandos universais (ajuda, horarios, meus, cancelar)
-  → domain.handleWhatsAppCommand()   ← comandos específicos do domínio
-  → runLlmToolAgent()                ← fallback: agente LLM com tools do domínio
-```
-
----
-
-## Stack
-
-| Parte | Estado atual | Próximos passos |
-|---|---|---|
-| Backend | Node + TypeScript, Fastify | — |
-| Domínios | dental, pizzeria | barbearia, pet shop, … |
-| Persistência | Memória | PostgreSQL / SQLite |
-| LLM | Ollama (llama3.1) + agente com tools | Memória de sessão, streaming |
-| WhatsApp | Stub + simulação | Baileys ou Meta Cloud API |
-| Frontend | React + Vite, single-page | — |
+Neste momento a documentação principal está neste README e no `python-ai/README.md`.

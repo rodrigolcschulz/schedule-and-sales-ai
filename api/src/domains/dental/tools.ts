@@ -1,5 +1,4 @@
-import type { OllamaToolDefinition } from "../../services/llm-tools.js";
-import type { ToolResult, DomainContext } from "../types.js";
+import type { ToolDefinition, ToolResult, DomainContext } from "../types.js";
 import {
   DENTAL_SERVICES,
   servicesPayloadForApi,
@@ -79,7 +78,7 @@ function buildInvalidServiceError(serviceRaw: string): string {
   return `invalid_service_id: use um destes service_id -> ${suggestionText}`;
 }
 
-export const DENTAL_TOOLS: OllamaToolDefinition[] = [
+export const DENTAL_TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
@@ -209,7 +208,8 @@ export async function executeDentalTool(
         };
       }
 
-      case "create_appointment": {
+      case "create_appointment":
+      case "create_booking": {
         const slotId = asStr(args.slot_id) ? normalizeSlotId(asStr(args.slot_id)!) : undefined;
         const patientName = asStr(args.patient_name);
         const phone = args.phone != null ? normPhone(String(args.phone)) : "";
@@ -245,7 +245,9 @@ export async function executeDentalTool(
         };
       }
 
-      case "list_appointments_for_phone": {
+      case "list_appointments_for_phone":
+      case "list_appointments":
+      case "find_booking": {
         const phone = args.phone != null ? normPhone(String(args.phone)) : "";
         if (!phone) return { ok: false, error: "missing_phone" };
         const list = ctx.patients.listAppointmentsByPhone(phone).map((a) => ({
@@ -257,7 +259,8 @@ export async function executeDentalTool(
         return { ok: true, result: { appointments: list } };
       }
 
-      case "cancel_appointment": {
+      case "cancel_appointment":
+      case "delete_booking": {
         const bookingId = asStr(args.booking_id);
         const phone = args.phone != null ? normPhone(String(args.phone)) : "";
         if (!bookingId || !phone) return { ok: false, error: "missing_fields" };

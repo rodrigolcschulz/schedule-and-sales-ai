@@ -9,16 +9,33 @@ services:
       BUSINESS_DOMAIN: dental
       # Stub: só loga mensagens; integração Baileys pode ser feita depois
       WHATSAPP_PROVIDER: stub
+      # Node não fala mais direto com o Ollama — fala com o serviço python-ai
+      AI_BASE_URL: http://python-ai:8001
+    expose:
+      - "3001"
+    # Descomente para testar a API direto no host (curl, Postman)
+    ports:
+      - "3001:3001"
+    depends_on:
+      - python-ai
+
+  python-ai:
+    build:
+      context: ./python-ai
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8001"
+      LLM_PROVIDER: ollama
       # Ollama no host (Docker Desktop / Linux com host-gateway)
       OLLAMA_URL: http://host.docker.internal:11434
       OLLAMA_MODEL: llama3.1
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:
-      - "3001"
-    # Descomente para testar a API direto no host (curl, Postman)
+      - "8001"
+    # Descomente para testar o python-ai direto no host (curl, /ai/health)
     ports:
-      - "3001:3001"
+      - "8001:8001"
 
   web:
     build:

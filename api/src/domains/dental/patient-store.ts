@@ -43,7 +43,6 @@ export class PatientStore {
       startsAt: slot.startsAt,
       customerName: input.patientName,
       phone: input.phone,
-      meta: { serviceId: svc.id, serviceName: svc.name },
     });
 
     if ("error" in booking) return { error: booking.error };

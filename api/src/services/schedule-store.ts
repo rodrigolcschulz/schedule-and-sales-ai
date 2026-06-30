@@ -1,137 +1,149 @@
-import { randomUUID } from "node:crypto";
+// services/schedule-store.ts
+// Gera os horários (slots) de atendimento de um domínio e guarda os
+// agendamentos (bookings) feitos sobre eles. Por enquanto tudo em memória
+// (RAM) — reinicia o processo, reinicia a agenda. Migrar pra um banco
+// depois é só trocar a implementação interna, a interface pública não muda.
 
-export type Booking = {
+export interface ScheduleConfig {
+  /** Hora de início do primeiro slot do dia (0-23) */
+  firstHour: number;
+  /** Hora de início do último slot do dia (0-23); cada slot dura 1h */
+  lastStartHour: number;
+  /** Dias da semana permitidos: 0=domingo ... 6=sábado */
+  allowedWeekdays: number[];
+  /** Timezone usado pra gerar os horários (default: America/Sao_Paulo) */
+  timezone?: string;
+}
+
+export interface Slot {
+  /** Formato: `${date}_${HH}00`, ex: "2026-05-10_0900" */
+  id: string;
+  /** ISO 8601 com offset, ex: "2026-05-10T09:00:00-03:00" */
+  startsAt: string;
+  endsAt: string;
+}
+
+export interface Booking {
   id: string;
   slotId: string;
   startsAt: string;
   customerName: string;
   phone: string;
-  /** Dados extras específicos do domínio (ex.: { serviceId, serviceName } para odonto) */
-  meta?: Record<string, unknown>;
-  createdAt: string;
-};
+}
 
-export type Slot = {
-  id: string;
+export interface CreateBookingInput {
+  slotId: string;
   startsAt: string;
-  endsAt: string;
-};
-
-const SLOT_STEP_MS = 60 * 60 * 1000;
-
-/** Brasil continental (America/Sao_Paulo, UTC−3; sem horário de verão). */
-export const SCHEDULE_TZ_IANA = "America/Sao_Paulo";
-const TZ_OFFSET_BR = "-03:00";
-
-/** Padrão para pizzaria (à noite). Pode ser sobrescrito pelo construtor. */
-const SLOT_FIRST_HOUR_LOCAL = 18;
-const SLOT_LAST_START_HOUR_LOCAL = 22;
-
-function pad2(n: number): string {
-  return n.toString().padStart(2, "0");
+  customerName: string;
+  phone: string;
 }
 
-function toIso(d: Date): string {
-  return d.toISOString();
-}
+export type CreateBookingResult = Booking | { error: "slot_occupied" };
 
-/** Ex.: horário local da retirada para UI / WhatsApp */
-export function formatSlotTimeBr(isoUtc: string): string {
-  return new Date(isoUtc).toLocaleTimeString("pt-BR", {
-    timeZone: SCHEDULE_TZ_IANA,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
-/** Texto fixo para telas e README alinhado ao código acima */
-export function scheduleRangeDescription(): string {
-  return `Horários ${pad2(SLOT_FIRST_HOUR_LOCAL)}h–23h (${SCHEDULE_TZ_IANA}), slots de 1h — pensado para retirada/entrega à noite.`;
-}
+const DEFAULT_TIMEZONE = "America/Sao_Paulo";
+/** Offset fixo de America/Sao_Paulo (UTC-3, sem horário de verão desde 2019) */
+const SAO_PAULO_UTC_OFFSET = "-03:00";
 
 export class ScheduleStore {
-  private bookings = new Map<string, Booking>();
-  private readonly firstHour: number;
-  private readonly lastStartHour: number;
-  private readonly allowedWeekdays?: Set<number>;
+  private readonly config: Required<ScheduleConfig>;
+  private readonly bookingsById = new Map<string, Booking>();
+  private readonly bookingIdBySlot = new Map<string, string>();
 
-  constructor(config?: {
-    firstHour?: number;
-    lastStartHour?: number;
-    /** 0=domingo ... 6=sábado; omitido = todos os dias */
-    allowedWeekdays?: number[];
-  }) {
-    this.firstHour = config?.firstHour ?? SLOT_FIRST_HOUR_LOCAL;
-    this.lastStartHour = config?.lastStartHour ?? SLOT_LAST_START_HOUR_LOCAL;
-    this.allowedWeekdays = config?.allowedWeekdays?.length
-      ? new Set(config.allowedWeekdays)
-      : undefined;
+  constructor(config: ScheduleConfig) {
+    this.config = {
+      timezone: DEFAULT_TIMEZONE,
+      ...config,
+    };
   }
 
   /**
-   * Slots de 1h entre 18:00 e 22:00 no horário de Brasília (último slot termina 23:00).
-   * IDs: `YYYY-MM-DD_HHmm` com HH em horário local (ex.: `2026-05-08_1800`).
+   * Gera os slots possíveis para um dia (não diz se estão ocupados —
+   * para isso, cruze com getBookedSlotIds()). Retorna lista vazia se a
+   * data cair fora dos dias permitidos ou tiver formato inválido.
    */
-  getSlotsForDay(dateYmd: string): Slot[] {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateYmd);
-    if (!m) return [];
+  getSlotsForDay(date: string): Slot[] {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
 
-    const year = Number(m[1]);
-    const month = Number(m[2]);
-    const day = Number(m[3]);
-    const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-    if (this.allowedWeekdays && !this.allowedWeekdays.has(weekday)) return [];
+    const weekday = this.weekdayFor(date);
+    if (!this.config.allowedWeekdays.includes(weekday)) return [];
 
     const slots: Slot[] = [];
-    for (let h = this.firstHour; h <= this.lastStartHour; h++) {
-      const s = new Date(`${dateYmd}T${pad2(h)}:00:00${TZ_OFFSET_BR}`);
-      const e = new Date(s.getTime() + SLOT_STEP_MS);
+    for (let hour = this.config.firstHour; hour <= this.config.lastStartHour; hour++) {
+      const hh = String(hour).padStart(2, "0");
       slots.push({
-        id: `${dateYmd}_${pad2(h)}00`,
-        startsAt: toIso(s),
-        endsAt: toIso(e),
+        id: `${date}_${hh}00`,
+        startsAt: this.toIso(date, hour),
+        endsAt: this.toIso(date, hour + 1),
       });
     }
     return slots;
   }
 
+  /** IDs de todos os slots que já têm booking ativo (em qualquer data) */
   getBookedSlotIds(): Set<string> {
-    return new Set([...this.bookings.values()].map((b) => b.slotId));
+    return new Set(this.bookingIdBySlot.keys());
   }
 
-  listBookings(): Booking[] {
-    return [...this.bookings.values()].sort((a, b) =>
-      a.startsAt.localeCompare(b.startsAt)
-    );
-  }
-
-  createBooking(input: {
-    slotId: string;
-    startsAt: string;
-    customerName: string;
-    phone: string;
-    meta?: Record<string, unknown>;
-  }): Booking | { error: string } {
-    if ([...this.bookings.values()].some((b) => b.slotId === input.slotId)) {
+  createBooking(input: CreateBookingInput): CreateBookingResult {
+    if (this.bookingIdBySlot.has(input.slotId)) {
       return { error: "slot_occupied" };
     }
-    const b: Booking = {
-      id: randomUUID(),
+
+    const booking: Booking = {
+      id: this.generateBookingId(),
       slotId: input.slotId,
       startsAt: input.startsAt,
       customerName: input.customerName,
-      phone: input.phone.replace(/\D/g, "") || input.phone,
-      ...(input.meta ? { meta: input.meta } : {}),
-      createdAt: new Date().toISOString(),
+      phone: input.phone,
     };
-    this.bookings.set(b.id, b);
-    return b;
+
+    this.bookingsById.set(booking.id, booking);
+    this.bookingIdBySlot.set(input.slotId, booking.id);
+    return booking;
   }
 
+  getBooking(id: string): Booking | undefined {
+    return this.bookingsById.get(id);
+  }
+
+  listBookings(): Booking[] {
+    return Array.from(this.bookingsById.values());
+  }
+
+  /** Retorna true se cancelou; false se o id não existia */
   cancelBooking(id: string): boolean {
-    return this.bookings.delete(id);
+    const booking = this.bookingsById.get(id);
+    if (!booking) return false;
+    this.bookingsById.delete(id);
+    this.bookingIdBySlot.delete(booking.slotId);
+    return true;
+  }
+
+  private weekdayFor(date: string): number {
+    // Calcula o dia da semana de forma estável (UTC), sem depender do
+    // timezone do processo que está rodando o Node.
+    const [y, m, d] = date.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  }
+
+  private toIso(date: string, hour: number): string {
+    const hh = String(hour).padStart(2, "0");
+    return `${date}T${hh}:00:00${SAO_PAULO_UTC_OFFSET}`;
+  }
+
+  private generateBookingId(): string {
+    return `bk_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   }
 }
 
-export { SLOT_FIRST_HOUR_LOCAL, SLOT_LAST_START_HOUR_LOCAL };
+/** Formata um ISO string (com offset) para exibição em pt-BR, ex: "10/05 09:00" */
+export function formatSlotTimeBr(iso: string): string {
+  const date = new Date(iso);
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: DEFAULT_TIMEZONE,
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}

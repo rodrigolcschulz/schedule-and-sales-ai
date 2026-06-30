@@ -3,31 +3,16 @@ import cors from "@fastify/cors";
 import { z } from "zod";
 import { createWhatsAppProvider, type WhatsAppProviderKind } from "./whatsapp/factory.js";
 import type { StubWhatsAppProvider } from "./whatsapp/stub-provider.js";
-import { attachDomainWhatsAppBot } from "./services/whatsapp-bot.js";
-import {
-  getOllamaBaseUrl,
-  getOllamaModel,
-  ollamaChat,
-  ollamaTags,
-} from "./services/ollama-chat.js";
-import { runLlmToolAgent } from "./services/llm-agent.js";
 import { dentalDomain } from "./domains/dental/index.js";
-import { pizzeriaDomain } from "./domains/pizzeria/index.js";
-import type { BusinessDomain, DomainContext } from "./domains/types.js";
+import type { DomainContext } from "./domains/types.js";
+import { runAgent } from "./services/run-agent.js";
+import { aiClient, type ToolExecutionRecord } from "./services/ai-client.js";
 
-// ── Domain selection ──────────────────────────────────────────────────────────
-const DOMAIN_REGISTRY: Record<string, BusinessDomain> = {
-  dental: dentalDomain,
-  pizzeria: pizzeriaDomain,
-};
-
-const domainId = (process.env.BUSINESS_DOMAIN ?? "dental").toLowerCase();
-const domain: BusinessDomain = DOMAIN_REGISTRY[domainId] ?? dentalDomain;
+const domain = dentalDomain;
 const ctx: DomainContext = domain.createContext();
 
 console.info(`[domain] Active domain: ${domain.displayName} (${domain.id})`);
 
-// ── WhatsApp ──────────────────────────────────────────────────────────────────
 function envProviderKind(): WhatsAppProviderKind {
   const v = (process.env.WHATSAPP_PROVIDER ?? "stub").toLowerCase();
   if (v === "baileys") return "baileys";
@@ -35,51 +20,54 @@ function envProviderKind(): WhatsAppProviderKind {
 }
 
 const wa = createWhatsAppProvider(envProviderKind());
-attachDomainWhatsAppBot(wa, domain, ctx, { useLlmFallback: true });
+wa.onMessage(async (msg) => {
+  const text = msg.text.trim();
+  const lower = text.toLowerCase();
 
-// ── Fastify ───────────────────────────────────────────────────────────────────
+  try {
+    if (lower === "ajuda" || lower === "help") {
+      await wa.sendText(msg.from, domain.whatsAppHelp);
+      return;
+    }
+
+    const directReply = await domain.handleWhatsAppCommand?.(text, lower, msg.from, ctx);
+    if (directReply) {
+      await wa.sendText(msg.from, directReply);
+      return;
+    }
+
+    const reply = await runAgent(domain, text, [], `wa:${msg.from}`, ctx);
+    await wa.sendText(msg.from, reply);
+  } catch (err) {
+    console.error("[whatsapp] failed to process message", err);
+    await wa.sendText(msg.from, "Desculpe, não consegui processar agora. Pode tentar novamente?");
+  }
+});
+
 const app = Fastify({ logger: true });
-
 await app.register(cors, { origin: true });
 
 app.get("/health", async () => ({ ok: true }));
 
-// ── Domain info ───────────────────────────────────────────────────────────────
 app.get("/domain", async () => ({
   id: domain.id,
   displayName: domain.displayName,
   tools: domain.tools.map((t) => t.function.name),
 }));
 
-// ── Catalog / services ────────────────────────────────────────────────────────
-// Each domain exposes its catalog via GET /catalog (generic) or legacy routes.
 app.get("/catalog", async () => {
-  if (domain.id === "dental") {
-    const { servicesPayloadForApi } = await import("./domains/dental/catalog.js");
-    return servicesPayloadForApi();
-  }
-  if (domain.id === "pizzeria") {
-    const { menuPayloadForApi } = await import("./services/pizzeria-catalog.js");
-    return menuPayloadForApi();
-  }
-  return { items: [] };
+  const { servicesPayloadForApi } = await import("./domains/dental/catalog.js");
+  return servicesPayloadForApi();
 });
 
-// Legacy: /menu (pizzeria) still works when domain=pizzeria
 app.get("/menu", async (_req, reply) => {
-  if (domain.id !== "pizzeria") return reply.code(404).send({ error: "not_available_for_this_domain" });
-  const { menuPayloadForApi } = await import("./services/pizzeria-catalog.js");
-  return menuPayloadForApi();
+  return reply.code(404).send({ error: "not_available_for_this_domain" });
 });
 
-// Legacy: /orders (pizzeria)
 app.get("/orders", async (_req, reply) => {
-  if (domain.id !== "pizzeria") return reply.code(404).send({ error: "not_available_for_this_domain" });
-  const { orders } = ctx as unknown as { orders: import("./services/order-store.js").OrderStore };
-  return orders.listOrders();
+  return reply.code(404).send({ error: "not_available_for_this_domain" });
 });
 
-// ── Slots & bookings ──────────────────────────────────────────────────────────
 app.get("/slots", async (req) => {
   const q = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).parse(req.query);
   const slots = ctx.schedule.getSlotsForDay(q.date);
@@ -104,9 +92,9 @@ app.post("/bookings", async (req, reply) => {
   const slot = slots.find((s) => s.id === body.slotId);
   if (!slot) return reply.code(400).send({ error: "invalid_slot" });
 
-  // If dental domain and serviceId provided, delegate to PatientStore
-  if (domain.id === "dental" && body.serviceId) {
-    const { patients } = ctx as unknown as { patients: import("./domains/dental/patient-store.js").PatientStore };
+  const { patients } = ctx as unknown as { patients: import("./domains/dental/patient-store.js").PatientStore };
+
+  if (body.serviceId) {
     const res = patients.createAppointment(ctx.schedule, {
       slotId: slot.id,
       patientName: body.customerName,
@@ -136,18 +124,13 @@ app.delete<{ Params: { id: string } }>("/bookings/:id", async (req, reply) => {
   return { ok: true };
 });
 
-// Dental-specific: list appointments for a patient
-app.get("/appointments", async (req, reply) => {
-  if (domain.id !== "dental") return reply.code(404).send({ error: "not_available_for_this_domain" });
+app.get("/appointments", async (req) => {
   const { patients } = ctx as unknown as { patients: import("./domains/dental/patient-store.js").PatientStore };
   const q = z.object({ phone: z.string().optional() }).parse(req.query);
-  const list = q.phone
-    ? patients.listAppointmentsByPhone(q.phone)
-    : patients.listAll();
+  const list = q.phone ? patients.listAppointmentsByPhone(q.phone) : patients.listAll();
   return { appointments: list };
 });
 
-// ── WhatsApp simulation ───────────────────────────────────────────────────────
 const simulateBody = z.object({
   from: z.string().min(3),
   text: z.string().min(1),
@@ -165,45 +148,61 @@ app.post("/integrations/whatsapp/webhook", async (req) => {
   return { ok: true };
 });
 
-// ── LLM ───────────────────────────────────────────────────────────────────────
-const llmSystemPrompt =
-  process.env.LLM_SYSTEM_PROMPT ?? domain.systemPrompt;
-
 const llmChatBody = z.object({
-  messages: z
-    .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().min(1) }))
-    .min(1),
+  messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().min(1) })).min(1),
+  sessionId: z.string().min(1).optional(),
 });
 
 app.get("/llm/status", async () => {
-  const tags = await ollamaTags();
-  return {
-    model: getOllamaModel(),
-    ollamaUrl: getOllamaBaseUrl(),
-    ollamaReachable: tags.ok,
-    models: tags.names,
-  };
-});
-
-app.post("/llm/chat", async (req, reply) => {
-  const body = llmChatBody.parse(req.body);
   try {
-    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-      { role: "system", content: llmSystemPrompt },
-      ...body.messages,
-    ];
-    const text = await ollamaChat(messages);
-    return { reply: text };
+    const health = await aiClient.health();
+    const provider = health.provider;
+    const providerInfo =
+      typeof provider === "object" && provider !== null
+        ? (provider as Record<string, unknown>)
+        : {};
+    const model =
+      typeof providerInfo.model === "string"
+        ? providerInfo.model
+        : "unknown";
+    const models = Array.isArray(providerInfo.models)
+      ? (providerInfo.models as string[])
+      : [];
+    const ollamaReachable =
+      typeof providerInfo.available === "boolean"
+        ? providerInfo.available
+        : true;
+    const ollamaUrl = process.env.OLLAMA_URL ?? "http://localhost:11434";
+
+    return {
+      model,
+      ollamaUrl,
+      ollamaReachable,
+      models,
+      aiBackend: "python",
+      aiBaseUrl: process.env.AI_BASE_URL ?? "http://localhost:8001",
+      pythonAiReachable: true,
+      provider,
+      status: health.status,
+    };
   } catch (e) {
-    req.log.error(e);
-    return reply.code(502).send({ error: "ollama_error", detail: e instanceof Error ? e.message : String(e) });
+    return {
+      model: "unknown",
+      ollamaUrl: process.env.OLLAMA_URL ?? "http://localhost:11434",
+      ollamaReachable: false,
+      models: [],
+      aiBackend: "python",
+      aiBaseUrl: process.env.AI_BASE_URL ?? "http://localhost:8001",
+      pythonAiReachable: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
   }
 });
 
 app.get("/llm/tools", async () => ({
   domain: domain.id,
   tools: domain.tools,
-  hint: "POST /llm/tools/invoke com { tool, arguments } para testar sem LLM; POST /llm/chat/agent para agente com Ollama.",
+  hint: "POST /llm/tools/invoke com { tool, arguments } para testar tools; POST /llm/chat/agent para fluxo completo.",
 }));
 
 const toolInvokeBody = z.object({
@@ -218,26 +217,120 @@ app.post("/llm/tools/invoke", async (req, reply) => {
   return { tool: body.tool, result: result.result };
 });
 
-app.post("/llm/chat/agent", async (req, reply) => {
-  const body = llmChatBody.parse(req.body);
+const plannerBody = z.object({
+  message: z.string().min(1),
+  phone: z.string().optional(),
+});
+
+app.post("/llm/planner", async (req, reply) => {
+  const body = plannerBody.parse(req.body);
   try {
-    const out = await runLlmToolAgent(body.messages, {
-      systemPrompt: domain.systemPrompt,
-      tools: domain.tools,
-      executeTool: (name, args) => domain.executeTool(name, args, ctx),
+    const plan = await aiClient.plan({
+      message: body.message,
+      history: [],
+      domainId: domain.id,
+      sessionId: body.phone ?? "planner-session",
     });
-    return { reply: out.reply, trace: out.trace };
+    return { plan };
   } catch (e) {
     req.log.error(e);
-    return reply.code(502).send({ error: "ollama_agent_error", detail: e instanceof Error ? e.message : String(e) });
+    return reply.code(502).send({ error: "python_ai_error", detail: e instanceof Error ? e.message : String(e) });
   }
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
+async function executePlanSteps(
+  steps: Array<{ toolName: string; toolArgs: Record<string, unknown> }>
+): Promise<ToolExecutionRecord[]> {
+  const toolResults: ToolExecutionRecord[] = [];
+
+  for (const step of steps) {
+    try {
+      const outcome = await domain.executeTool(step.toolName, step.toolArgs, ctx);
+      toolResults.push({
+        tool: step.toolName,
+        args: step.toolArgs,
+        result: outcome.ok ? outcome.result : { error: outcome.error },
+      });
+    } catch (err) {
+      toolResults.push({
+        tool: step.toolName,
+        args: step.toolArgs,
+        result: { error: err instanceof Error ? err.message : "execute_failed" },
+      });
+    }
+  }
+
+  return toolResults;
+}
+
+app.post("/llm/chat", async (req, reply) => {
+  const body = llmChatBody.parse(req.body);
+  try {
+    const lastUserMessage = [...body.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    const sessionId = body.sessionId ?? "web-session";
+    const out = await runAgent(domain, lastUserMessage, body.messages, sessionId, ctx);
+    return { reply: out };
+  } catch (e) {
+    req.log.error(e);
+    return reply.code(502).send({ error: "python_ai_error", detail: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.post("/llm/chat/agent", async (req, reply) => {
+  const body = llmChatBody.parse(req.body);
+  try {
+    const lastUserMessage = [...body.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    const sessionId = body.sessionId ?? "web-session";
+
+    const plan = await aiClient.plan({
+      message: lastUserMessage,
+      history: body.messages,
+      domainId: domain.id,
+      sessionId,
+    });
+
+    if (plan.needsClarification || plan.missingFields.length > 0) {
+      return { reply: plan.suggestedReply, trace: [], plan };
+    }
+
+    const toolResults = await executePlanSteps(
+      plan.steps.map((s) => ({ toolName: s.toolName, toolArgs: s.toolArgs }))
+    );
+
+    const hasToolError = toolResults.some(
+      (entry) =>
+        typeof entry.result === "object" &&
+        entry.result !== null &&
+        "error" in (entry.result as Record<string, unknown>)
+    );
+
+    const reflected = await aiClient.reflect({
+      plan,
+      executeResult: {
+        success: !hasToolError,
+        result: { toolResults },
+        ...(hasToolError ? { error: "tool_execution_failed" } : {}),
+      },
+    });
+
+    if (!reflected.approved) {
+      return {
+        reply: "Desculpe, não consegui processar sua solicitação agora. Pode tentar de outro jeito?",
+        trace: toolResults,
+        plan,
+      };
+    }
+
+    return { reply: reflected.finalReply, trace: toolResults, plan };
+  } catch (e) {
+    req.log.error(e);
+    return reply.code(502).send({ error: "python_ai_error", detail: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 const port = Number(process.env.PORT ?? 3001);
 const host = process.env.HOST ?? "0.0.0.0";
 
 await wa.start();
 await app.listen({ port, host });
 console.info(`API http://${host}:${port} — domain: ${domain.id}`);
-
